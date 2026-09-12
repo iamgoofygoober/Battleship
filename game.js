@@ -7,42 +7,17 @@
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// Fleet presets offered on the rules screen, keyed by ship count.
-// A game's actual fleet is whatever's stored in game.settings.fleet —
-// these are just what the host picks from when setting up a room.
-const FLEET_PRESETS = {
-  3: [
-    { id: "cruiser",   name: "Cruiser",   size: 3 },
-    { id: "submarine", name: "Submarine", size: 3 },
-    { id: "destroyer", name: "Destroyer", size: 2 },
-  ],
-  4: [
-    { id: "battleship", name: "Battleship", size: 4 },
-    { id: "cruiser",    name: "Cruiser",    size: 3 },
-    { id: "submarine",  name: "Submarine",  size: 3 },
-    { id: "destroyer",  name: "Destroyer",  size: 2 },
-  ],
-  5: [
-    { id: "carrier",    name: "Carrier",    size: 5 },
-    { id: "battleship", name: "Battleship", size: 4 },
-    { id: "cruiser",    name: "Cruiser",    size: 3 },
-    { id: "submarine",  name: "Submarine",  size: 3 },
-    { id: "destroyer",  name: "Destroyer",  size: 2 },
-  ],
-  6: [
-    { id: "carrier",    name: "Carrier",    size: 5 },
-    { id: "battleship", name: "Battleship", size: 4 },
-    { id: "cruiser",    name: "Cruiser",    size: 3 },
-    { id: "submarine",  name: "Submarine",  size: 3 },
-    { id: "destroyer",  name: "Destroyer",  size: 2 },
-    { id: "patrol",     name: "Patrol Boat",size: 2 },
-  ],
-};
-
-// Overwritten from game.settings once a match is found — these defaults
-// only matter before that (e.g. rendering isn't attempted before then).
+// Placeholder used only before a game's real settings are loaded — the
+// server (sanitize_game_settings in schema.sql) is the source of truth
+// for what a room's actual fleet is, built from ship_count + include_titanic.
 let GRID_SIZE = 10;
-let FLEET_DEF = FLEET_PRESETS[5];
+let FLEET_DEF = [
+  { id: "carrier",    name: "Carrier",    w: 5, h: 1, size: 5 },
+  { id: "battleship", name: "Battleship", w: 4, h: 1, size: 4 },
+  { id: "cruiser",    name: "Cruiser",    w: 3, h: 1, size: 3 },
+  { id: "submarine",  name: "Submarine",  w: 3, h: 1, size: 3 },
+  { id: "destroyer",  name: "Destroyer",  w: 2, h: 1, size: 2 },
+];
 let allowAutoplace = true;
 let chatEnabled = true;
 
@@ -101,10 +76,19 @@ async function boot() {
 // ------------------------------------------------------------
 // Lobby: create / join
 // ------------------------------------------------------------
+function updateTitanicAvailability() {
+  const bigEnough = parseInt($("#ruleGridSize").value, 10) >= 10;
+  $("#titanicRow").classList.toggle("disabled", !bigEnough);
+  if (!bigEnough) $("#ruleTitanic").checked = false;
+}
+
 $("#btnOpenRules").addEventListener("click", () => {
   $("#rulesError").textContent = "";
+  updateTitanicAvailability();
   showView("rules");
 });
+
+$("#ruleGridSize").addEventListener("change", updateTitanicAvailability);
 
 $("#btnRulesCancel").addEventListener("click", () => {
   showView("lobby");
@@ -116,10 +100,11 @@ $("#btnRulesCreate").addEventListener("click", async () => {
   const isPublic = $("#ruleIsPublic").checked;
   const settings = {
     grid_size: parseInt($("#ruleGridSize").value, 10),
+    ship_count: Math.max(0, Math.min(9, parseInt($("#ruleShipCount").value, 10) || 0)),
+    include_titanic: $("#ruleTitanic").checked,
     fire_again: $("#ruleFireAgain").checked,
     allow_autoplace: $("#ruleAutoplace").checked,
     chat_enabled: $("#ruleChat").checked,
-    fleet: FLEET_PRESETS[$("#ruleFleetSize").value],
   };
   try {
     const { data, error } = await sb.rpc("create_game", { p_public: isPublic, p_settings: settings });
@@ -277,7 +262,9 @@ function onShotInsert(shot) {
 function applySettingsFromGame() {
   const s = game.settings || {};
   GRID_SIZE = s.grid_size || 10;
-  FLEET_DEF = Array.isArray(s.fleet) && s.fleet.length ? s.fleet : FLEET_PRESETS[5];
+  // Only fall back if settings.fleet is missing/malformed — an empty
+  // array is a deliberate "0 ships" room, not something to override.
+  FLEET_DEF = Array.isArray(s.fleet) ? s.fleet : FLEET_DEF;
   allowAutoplace = s.allow_autoplace !== false;
   chatEnabled = s.chat_enabled !== false;
   $("#btnRandomize").style.display = allowAutoplace ? "" : "none";
@@ -293,6 +280,13 @@ function enterPlacement() {
   renderFleetList();
   updatePlaceHint();
   updateOrientationDisplay();
+  if (FLEET_DEF.length === 0) {
+    $("#btnReady").disabled = false;
+    $("#placeStatus").textContent = "This room has no ships — ready when you are.";
+  } else {
+    $("#btnReady").disabled = true;
+    $("#placeStatus").textContent = "";
+  }
   showView("place");
 }
 
@@ -328,13 +322,17 @@ function buildPlaceGrid() {
   }
 }
 
-function shipCellsFor(x, y, size, dir) {
+function shipCellsFor(x, y, def, dir) {
+  const w = dir === "H" ? def.w : def.h;
+  const h = dir === "H" ? def.h : def.w;
   const cells = [];
-  for (let i = 0; i < size; i++) {
-    const cx = dir === "H" ? x + i : x;
-    const cy = dir === "H" ? y : y + i;
-    if (cx >= GRID_SIZE || cy >= GRID_SIZE) return null;
-    cells.push({ x: cx, y: cy });
+  for (let dy = 0; dy < h; dy++) {
+    for (let dx = 0; dx < w; dx++) {
+      const cx = x + dx;
+      const cy = y + dy;
+      if (cx >= GRID_SIZE || cy >= GRID_SIZE) return null;
+      cells.push({ x: cx, y: cy });
+    }
   }
   return cells;
 }
@@ -347,7 +345,7 @@ function canPlace(cells) {
 function previewShip(x, y) {
   const def = nextShipDef();
   if (!def) return;
-  const cells = shipCellsFor(x, y, def.size, orientation);
+  const cells = shipCellsFor(x, y, def, orientation);
   const ok = canPlace(cells);
   document.querySelectorAll("#placeGrid .cell").forEach((el) => {
     el.classList.remove("preview-ok", "preview-bad");
@@ -364,13 +362,16 @@ function clearPreview() {
   });
 }
 
-function flashInvalid(x, y) {
-  const el = document.querySelector(`#placeGrid .cell[data-x="${x}"][data-y="${y}"]`);
-  if (!el) return;
-  el.classList.remove("invalid-tap");
-  // force reflow so the animation can re-trigger on repeated taps
-  void el.offsetWidth;
-  el.classList.add("invalid-tap");
+function flashInvalid(cells) {
+  const list = Array.isArray(cells) ? cells : [cells];
+  list.forEach(({ x, y }) => {
+    const el = document.querySelector(`#placeGrid .cell[data-x="${x}"][data-y="${y}"]`);
+    if (!el) return;
+    el.classList.remove("invalid-tap");
+    void el.offsetWidth; // force reflow so the animation can re-trigger on repeated taps
+    el.classList.add("invalid-tap");
+    el.addEventListener("animationend", () => el.classList.remove("invalid-tap"), { once: true });
+  });
 }
 
 function onPlaceGridClick(x, y) {
@@ -401,9 +402,9 @@ function removeShip(shipId) {
 function placeShipAt(x, y) {
   const def = nextShipDef();
   if (!def) return;
-  const cells = shipCellsFor(x, y, def.size, orientation);
-  if (!canPlace(cells)) {
-    flashInvalid(x, y);
+  const cells = shipCellsFor(x, y, def, orientation);
+  if (!cells || !canPlace(cells)) {
+    flashInvalid(cells || [{ x, y }]);
     return;
   }
 
@@ -423,6 +424,11 @@ function placeShipAt(x, y) {
   }
 }
 
+// "5" for a plain 5-long ship, "4×2" for a block-shaped one like the Titanic
+function shipSizeLabel(def) {
+  return def.h > 1 ? `${def.w}×${def.h}` : `${def.size}`;
+}
+
 function updatePlaceHint() {
   const hintBlock = $("#placeHint");
   const def = nextShipDef();
@@ -432,7 +438,7 @@ function updatePlaceHint() {
   }
   hintBlock.style.display = "block";
   $("#placeShipName").textContent = def.name;
-  $("#placeShipSize").textContent = def.size;
+  $("#placeShipSize").textContent = shipSizeLabel(def);
 }
 
 function renderFleetList() {
@@ -442,7 +448,8 @@ function renderFleetList() {
   FLEET_DEF.forEach((def) => {
     const placed = myFleet.some((s) => s.id === def.id);
     const li = document.createElement("li");
-    li.textContent = placed ? `${def.name} · ${def.size} · tap to remove` : `${def.name} · ${def.size}`;
+    const label = `${def.name} · ${shipSizeLabel(def)}`;
+    li.textContent = placed ? `${label} · tap to remove` : label;
     if (placed) {
       li.classList.add("placed");
       li.addEventListener("click", () => removeShip(def.id));
@@ -480,8 +487,8 @@ $("#btnRandomize").addEventListener("click", () => {
       const dir = Math.random() < 0.5 ? "H" : "V";
       const x = Math.floor(Math.random() * GRID_SIZE);
       const y = Math.floor(Math.random() * GRID_SIZE);
-      const cells = shipCellsFor(x, y, def.size, dir);
-      if (canPlace(cells)) {
+      const cells = shipCellsFor(x, y, def, dir);
+      if (cells && canPlace(cells)) {
         cells.forEach((c) => {
           occupied.add(`${c.x},${c.y}`);
           const el = document.querySelector(`#placeGrid .cell[data-x="${c.x}"][data-y="${c.y}"]`);
@@ -494,8 +501,10 @@ $("#btnRandomize").addEventListener("click", () => {
   }
   renderFleetList();
   updatePlaceHint();
-  $("#btnReady").disabled = false;
-  $("#placeStatus").textContent = "Fleet positioned. Ready when you are.";
+  if (!nextShipDef()) {
+    $("#btnReady").disabled = false;
+    $("#placeStatus").textContent = "Fleet positioned. Ready when you are.";
+  }
 });
 
 $("#btnReady").addEventListener("click", async () => {
