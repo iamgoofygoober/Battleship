@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Salvo — 2‑Player Battleship</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="scanlines" aria-hidden="true"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">◎</span>
+    <span class="brand-name">SALVO</span>
+  </div>
+  <div class="conn" id="connStatus">
+    <span class="dot" id="connDot"></span>
+    <span id="connLabel">connecting…</span>
+  </div>
+</header>
+
+<main id="app">
+
+  <!-- ===================== LOBBY ===================== -->
+  <section id="view-lobby" class="view">
+    <div class="hero">
+      <h1>Chart the grid.<br>Sink the fleet.</h1>
+      <p class="sub">A two‑player Battleship match, synced live over Supabase. No download, no server to run — open this on two devices and go.</p>
+    </div>
+
+    <div class="lobby-cards">
+      <div class="card card-featured">
+        <h2>Quick match</h2>
+        <p>Get paired with the next available player — no code needed.</p>
+        <button id="btnQuickMatch" class="btn btn-primary">Find opponent</button>
+      </div>
+      <div class="card">
+        <h2>Host a room</h2>
+        <p>Set the board size, fleet, and house rules — or leave defaults and jump right in.</p>
+        <button id="btnOpenRules" class="btn btn-outline">Set up room</button>
+      </div>
+      <div class="card">
+        <h2>Join by code</h2>
+        <p>Enter the 4‑character code you were given.</p>
+        <form id="joinForm">
+          <input id="joinCode" class="code-input" maxlength="4" placeholder="A1B2" autocomplete="off" autocapitalize="characters">
+          <button type="submit" class="btn btn-outline">Join room</button>
+        </form>
+      </div>
+    </div>
+
+    <p id="lobbyError" class="error" role="alert"></p>
+  </section>
+
+  <!-- ===================== ROOM SETUP / RULES ===================== -->
+  <section id="view-rules" class="view">
+    <div class="rules-panel">
+      <h2>Room setup</h2>
+      <p class="hint">These apply to this room only — your opponent plays under whatever you set here.</p>
+
+      <label class="toggle-row">
+        <input type="checkbox" id="ruleIsPublic">
+        <span>Public — joinable via Quick Match too</span>
+      </label>
+
+      <div class="field-grid">
+        <label class="field">
+          <span>Board size</span>
+          <select id="ruleGridSize">
+            <option value="8">8 × 8</option>
+            <option value="10" selected>10 × 10 (standard)</option>
+            <option value="12">12 × 12</option>
+            <option value="14">14 × 14</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Fleet size</span>
+          <select id="ruleFleetSize">
+            <option value="3">3 ships</option>
+            <option value="4">4 ships</option>
+            <option value="5" selected>5 ships (classic)</option>
+            <option value="6">6 ships</option>
+          </select>
+        </label>
+      </div>
+
+      <label class="toggle-row">
+        <input type="checkbox" id="ruleFireAgain">
+        <span>Fire again after a hit</span>
+      </label>
+      <label class="toggle-row">
+        <input type="checkbox" id="ruleAutoplace" checked>
+        <span>Allow auto-place fleet</span>
+      </label>
+      <label class="toggle-row">
+        <input type="checkbox" id="ruleChat" checked>
+        <span>Enable in-game chat</span>
+      </label>
+
+      <div class="rules-actions">
+        <button id="btnRulesCancel" class="btn btn-outline btn-small">Back</button>
+        <button id="btnRulesCreate" class="btn btn-primary">Create room</button>
+      </div>
+      <p id="rulesError" class="error" role="alert"></p>
+    </div>
+  </section>
+
+  <!-- ===================== QUICK MATCH SEARCHING ===================== -->
+  <section id="view-queue" class="view">
+    <div class="waiting-panel">
+      <div class="radar-spin" aria-hidden="true"></div>
+      <h2>Finding an opponent…</h2>
+      <p>You'll drop straight into fleet placement the moment someone joins.</p>
+      <button id="btnCancelQueue" class="btn btn-outline btn-small">Cancel</button>
+    </div>
+  </section>
+
+  <!-- ===================== WAITING FOR OPPONENT ===================== -->
+  <section id="view-waiting" class="view">
+    <div class="waiting-panel">
+      <div class="radar-spin" aria-hidden="true"></div>
+      <h2>Room <span id="waitingCode" class="room-code"></span></h2>
+      <p id="waitingSub">Send this code to your opponent. Waiting for them to join…</p>
+      <button id="btnCopyCode" class="btn btn-outline btn-small">Copy code</button>
+    </div>
+  </section>
+
+  <!-- ===================== SHIP PLACEMENT ===================== -->
+  <section id="view-place" class="view">
+    <div class="place-layout">
+      <div class="place-board-wrap">
+        <h2>Position your fleet</h2>
+        <p class="hint" id="placeHint">Click a cell to place the <strong id="placeShipName">Carrier</strong> (<span id="placeShipSize">5</span> cells). Click a placed ship to remove it.</p>
+        <div id="placeGrid" class="grid grid-place" role="grid" aria-label="Your fleet placement grid"></div>
+        <div class="place-controls">
+          <button id="btnRotate" class="btn btn-outline btn-orientation">
+            <span id="rotateIcon" class="rotate-icon">↔</span>
+            <span id="rotateLabel">Horizontal</span>
+          </button>
+          <button id="btnRandomize" class="btn btn-outline btn-small">⚂ Auto‑place</button>
+        </div>
+      </div>
+      <div class="fleet-list">
+        <h3>Fleet</h3>
+        <ul id="fleetList"></ul>
+        <button id="btnReady" class="btn btn-primary" disabled>Ready for battle</button>
+        <p id="placeStatus" class="hint"></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== BATTLE ===================== -->
+  <section id="view-battle" class="view">
+    <div class="battle-status">
+      <h2 id="turnBanner">Your move</h2>
+      <p id="battleSub" class="hint"></p>
+    </div>
+    <div class="battle-layout">
+      <div class="board-panel">
+        <h3>Enemy waters</h3>
+        <div id="enemyGrid" class="grid grid-battle" role="grid" aria-label="Enemy grid — fire here"></div>
+      </div>
+      <div class="board-panel board-panel-self">
+        <h3>Your fleet</h3>
+        <div id="ownGrid" class="grid grid-battle grid-small" role="grid" aria-label="Your fleet"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== GAME OVER ===================== -->
+  <section id="view-over" class="view">
+    <div class="over-panel">
+      <h1 id="overTitle">Victory</h1>
+      <p id="overSub" class="sub"></p>
+      <button id="btnPlayAgain" class="btn btn-primary">Back to lobby</button>
+    </div>
+  </section>
+
+</main>
+
+<aside id="chatPanel" class="chat-panel hidden">
+  <button id="chatToggle" class="chat-toggle" type="button">
+    <span>💬 Chat</span>
+    <span id="chatToggleIcon">▸</span>
+  </button>
+  <div id="chatBody" class="chat-body">
+    <div id="chatMessages" class="chat-messages"></div>
+    <form id="chatForm" class="chat-form">
+      <input id="chatInput" class="chat-input" maxlength="500" placeholder="Message your opponent…" autocomplete="off">
+      <button type="submit" class="btn btn-primary btn-small">Send</button>
+    </form>
+  </div>
+</aside>
+
+<footer class="foot">
+  <span>Built with Supabase Realtime · hosted on GitHub Pages</span>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
