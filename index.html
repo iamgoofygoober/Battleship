@@ -78,15 +78,15 @@
           </select>
         </label>
         <label class="field">
-          <span>Fleet size</span>
-          <select id="ruleFleetSize">
-            <option value="3">3 ships</option>
-            <option value="4">4 ships</option>
-            <option value="5" selected>5 ships (classic)</option>
-            <option value="6">6 ships</option>
-          </select>
+          <span>Number of ships (0–9)</span>
+          <input type="number" id="ruleShipCount" min="0" max="9" value="5">
         </label>
       </div>
+
+      <label class="toggle-row" id="titanicRow">
+        <input type="checkbox" id="ruleTitanic">
+        <span>Include the Titanic — a 4×2 ship that replaces the Carrier (needs a 10×10+ board)</span>
+      </label>
 
       <label class="toggle-row">
         <input type="checkbox" id="ruleFireAgain">
